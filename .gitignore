@@ -1,0 +1,62 @@
+# Runtime state and logs
+runtime/
+logs/
+captures/
+pi/captures/
+pi/runtime/
+
+# Hardware E2E scratch artifacts kept outside source control
+/stage*_scenario*/
+/step*_*.png
+/jis_layout_check*.png
+/backslash_*_probe.png
+/stage01_scenario05_*_probe.png
+/captures/
+/*.png
+/*.jpg
+/*.jpeg
+/*.bmp
+/*.gif
+/nama@tests/
+
+# Local configuration and secrets
+.env
+.env.*
+config/local.toml
+config/*.local.toml
+id_rsa
+id_rsa.pub
+test_login_key
+test_login_key.pub
+*.pem
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Build outputs
+build/
+dist/
+*.egg-info/
+pico/build/
+*.uf2
+*.elf
+*.hex
+*.bin
+*.map
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db

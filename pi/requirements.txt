@@ -1,0 +1,5 @@
+pyserial>=3.5
+opencv-python>=4.8
+openai>=1.99.0
+Flask>=3.0
+pytest>=8.0
