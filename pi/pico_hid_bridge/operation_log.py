@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
 import sqlite3
-from typing import Any
+from typing import Any, Iterator
 
 
 def now_iso() -> str:
@@ -51,10 +52,15 @@ class OperationLogStore:
             max_screenshots=int(logs.get("max_screenshots", 5000)),
         )
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.database_path)
         connection.row_factory = sqlite3.Row
-        return connection
+        try:
+            yield connection
+            connection.commit()
+        finally:
+            connection.close()
 
     def _ensure_schema_with_recovery(self) -> None:
         try:

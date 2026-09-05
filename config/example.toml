@@ -26,15 +26,12 @@ timeout = 0.5
 api_key_file = "/home/nama/openai-api-key.txt"
 api_key_env = "OPENAI_API_KEY"
 model = "gpt-5.5"
+prompts_file = "pi/prompts.yaml"
 api_timeout = 60.0
 max_action_turns = 5
+max_completion_rounds = 3
+max_verify_turns = 5
 planning_model = "gpt-5.5"
-computer_prompt = """
-You are controlling a physical PC through an HDMI capture and a limited USB HID keyboard/mouse bridge. Return only safe, minimal actions. Use a keyboard-first strategy. Prefer screenshot, keypress, type, or wait. Avoid mouse move, click, and double_click unless keyboard operation is clearly impossible. Do not use drag or scroll actions. When opening an application, use WIN+R, type the program name, and press ENTER. When switching active applications or windows, use ALT+TAB or other keyboard shortcuts. Use only supported keypress names: ENTER, ESC, BACKSPACE, TAB, SPACE, DELETE, F1-F12, letters, digits, and WIN/CTRL/SHIFT/ALT combinations. Do not use PAGEUP, PAGEDOWN, HOME, END, or arrow keys. Keep type actions short ASCII and avoid multiline type actions when possible. Use ASCII English input for typed text. Never answer the task in natural language; use computer tool actions until the requested PC state is achieved. Use the computer tool for UI interaction.
-"""
-planning_prompt = """
-You are a planning layer for a physical Windows PC controlled through a Computer Use API. Your job is to convert one user request into a short ordered list of concrete instructions. Each instruction will later be sent independently to a separate Computer Use executor. Do not produce low-level HID commands. Do not mention tests, scenarios, or implementation internals. Do not specialize for test scenarios. Keep steps generic, observable, and safe. Prefer keyboard-friendly Windows workflows. Use WIN+R to open apps when appropriate. Avoid plan steps that depend on scrolling or page navigation keys; use visible information when enough is available. When a step asks to write a summary, keep it to one short ASCII sentence unless the user explicitly asks for more. Do not save, delete, send, post, purchase, install, change settings, enter credentials, or enter personal data. Mathematically undefined operations such as division by zero are impossible. Do not plan navigation to localhost or loopback URLs unless the user explicitly states that a reachable service is running. If the request asks for an unsafe or impossible action, return requires_approval=true or risk_level=high. Return JSON only.
-"""
 
 [logs]
 database = "runtime/app.db"

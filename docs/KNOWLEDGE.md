@@ -46,7 +46,7 @@ capture: /dev/video0
 
 call-only は、テスト関数、シナリオ定義、フィルタ、Pi5 へのコピーを確認する早いゲートです。ただし対象 PC 操作、OpenAI API、Pico UART、HDMI capture を使わないため、Stage01 完了判定には使えません。
 
-## キャプチャのウォームアップ
+## Capture warmup
 
 初期の capture-only / E2E では、`mean_brightness=0.0` の黒画面が出ました。これは対象 PC が黒いというより、USB HDMI capture の安定待ち不足でした。
 
@@ -233,7 +233,7 @@ Pico 側: HID入力完了後に ACK を返す
 
 この方式により、長文の末尾に `KEY ENTER` が混ざる問題と、長文が後続テストのタイミングで遅れて入力される問題を避けています。
 
-## シナリオ5 の仕様変更履歴
+## Scenario5 の仕様変更履歴
 
 Stage01-Scenario5 は、途中で仕様が何度か変わりました。
 
@@ -289,7 +289,7 @@ tests/unit/test_e2e_case_definitions.py
 
 このテストは、Scenario5 が `mspaint C:\Users\user\Pictures\test.png` に戻らないこと、`CTRL+O` を使うこと、対象パスが `C:\Users\user\Pictures\test.png` であることを固定しています。
 
-## 期待失敗ケース
+## Expected failure ケース
 
 Stage01 には失敗することが正しいケースがあります。
 
@@ -455,15 +455,15 @@ Stage02-Scenario7 は、壊れた SQLite DB を安全に検出して復旧する
 - E2E の結果表示は EXPECTED FAILURE だが、これは fault injection を検出した成功を意味する
 ```
 
-## Computer Use の検証プロンプト
+## Computer Use の verify prompt
 
 Stage02 中に、確認ステップで Computer Use が `SHIFT` などの操作を返したことがありました。verify step は画面判定だけを求める必要があります。
 
 安定した指示:
 
 ```text
-コンピューターを操作しない。キー入力、クリック、その他の操作を要求しない。
-条件を満たす場合だけ 'True' を返し、それ以外は 'False' を返す。
+Do not control the computer. Do not request keypress, click, or any other action.
+Return exactly 'True' if ...; otherwise return exactly 'False'.
 ```
 
 この文を省くと、verify のつもりが Pico への追加 HID 操作になり、ログや対象 PC 状態が余計に変わります。Stage02 以降の verify prompt では、操作禁止と True/False のみを明示します。
@@ -494,20 +494,20 @@ Stage02-Scenario3 では、スクリーンショットログを作るだけの�
 
 この判断を入れておくと、`scripts/ps1/test_pytest_call_only_on_pi.ps1` や Pi5 直接実行で SSH の二重化に悩まされません。
 
-## Stage02 最終検証メモ
+## Stage02 final validation notes
 
-日付: 2026-07-04
+Date: 2026-07-04
 
-Stage02 は、Pi 側テストと実機 Hardware E2E の両方が通ったときに完了とします。Stage02 のログ系シナリオは Computer Use の画面判定だけで判断せず、SQLite に残ったレコードを正とします。
+Stage02 is complete when both the Pi-side tests and the real hardware E2E pass. Do not judge Stage02 log scenarios only by visual Computer Use verification; the SQLite records are the source of truth.
 
-完了時に追加した最終確認:
+Final checks added during completion:
 
-- Stage02-Scenario2 では、`operation_log` に実 HID 操作が含まれている必要があります。`WAIT` だけでは不十分です。
-- Stage02-Scenario3 では、`screenshot_log` に `before` と `after` の両方の行が必要です。同じ event のスクリーンショットが 2 枚あるだけでは不十分です。
-- Stage02 E2E の各ステップは、必要な before/after capture を取得したあと、画面上の成功判定を `validate_stage02_logs()` に委ねてもよいです。
-- Keyboard / text の HID コマンドには短い自動 settle delay を入れ、`WIN+R` の直後に `chrome` を送っても先頭文字が落ちないようにしました。
+- Stage02-Scenario2 must contain a real HID operation in `operation_log`. A `WAIT` entry alone is not enough.
+- Stage02-Scenario3 must contain both `before` and `after` rows in `screenshot_log`. Two screenshots with the same event are not enough.
+- Stage02 E2E steps may defer visual success to `validate_stage02_logs()` after taking the required before/after captures.
+- Keyboard and text HID commands have a short automatic settle delay so `WIN+R` followed by `chrome` does not lose the leading characters.
 
-完了ゲートで使ったコマンド:
+Commands used for the completion gate:
 
 ```powershell
 .\scripts\ps1\test_pytest_call_only_on_pi.ps1 -PytestArgs @('tests/unit/test_e2e_hid_runner.py','tests/unit/test_e2e_case_definitions.py','tests/unit/test_operation_log.py','tests/unit/test_app_operation_log.py','tests/integration/test_operation_log.py','-q')
@@ -515,23 +515,23 @@ Stage02 は、Pi 側テストと実機 Hardware E2E の両方が通ったとき�
 .\scripts\ps1\test_e2e_suite.ps1 -Stage stage01_core_io
 ```
 
-## Stage03 / Stage04 完了メモ
+## Stage03 and Stage04 completion notes
 
-日付: 2026-07-04
+Date: 2026-07-04
 
-Stage03 と Stage04 は、WebUI 中心の E2E 経路で確認します。runner は Pi5 上に独立した runtime directory 付きで Flask WebUI app を作成し、`app.test_client()` から WebUI API を呼びます。Computer Use -> Pico UART -> target PC まで通す必要がある Request シナリオでは `/api/command` を使います。これにより、本番の WebUI API 経路をテストしつつ、対象 PC のブラウザ自体に WebUI を操作させずに済みます。
+Stage03 and Stage04 use a WebUI-oriented E2E path. The runner creates the Flask WebUI app on the Pi5 with an isolated runtime directory, calls WebUI APIs through `app.test_client()`, and uses `/api/command` for Request scenarios that must exercise Computer Use -> Pico UART -> target PC. This avoids making the target PC browser operate the WebUI itself while still testing the production WebUI API path.
 
-重要な判断:
+Important decisions:
 
-- Stage03 の emergency stop は Manual HID をブロックします。新しい Request command は emergency stop を解除し、新しい操作として開始します。
-- Suspend は、Resume で状態が解除されるまで Manual HID をブロックします。
-- 小さな `/api/approval-test` fixture は、Emergency Stop が pending approval を `cancelled_by_emergency_stop` としてキャンセルすることだけを検証するためにあります。
-- WebUI は User Log、Operation Log、System Log を別ペインとして表示します。
-- Manual HID は、単独の非 WIN 修飾キーとして `KEY ALT`、`KEY CTRL`、`KEY SHIFT` を拒否します。`KEY WIN` は Pico firmware が Windows key の単独押下をサポートしているため許可します。
-- WebUI Request は、既知の未対応 freehand mouse-drag request と `DefinitelyNotARealApp12345` failure fixture を、誤って成功扱いせずブロックします。
-- `/api/command` は action 実行後も Computer Use turn を継続するため、複数ステップの WebUI Request case が最初の HID batch の先へ進めます。
+- Stage03 emergency stop blocks Manual HID. A new Request command clears emergency stop and starts fresh.
+- Suspend blocks Manual HID until Resume clears the state.
+- A small `/api/approval-test` fixture exists only to validate that Emergency Stop cancels pending approvals as `cancelled_by_emergency_stop`.
+- WebUI now shows User Log, Operation Log, and System Log as separate panes.
+- Manual HID rejects `KEY ALT`, `KEY CTRL`, and `KEY SHIFT` as standalone non-WIN modifiers. `KEY WIN` remains allowed because the Pico firmware supports the Windows key as a standalone key.
+- WebUI Request blocks known unsupported/freehand mouse-drag requests and the `DefinitelyNotARealApp12345` failure fixture instead of reporting misleading success.
+- `/api/command` continues Computer Use turns after executing actions, so multi-step WebUI Request cases can progress beyond the first HID batch.
 
-完了ゲート:
+Completion gate:
 
 ```powershell
 .\scripts\ps1\test_pytest_call_only_on_pi.ps1 -PytestArgs @('tests/unit/test_e2e_hid_runner.py','tests/unit/test_e2e_case_definitions.py','tests/unit/test_app_operation_log.py','tests/unit/test_hid_commands.py','tests/unit/test_run_e2e_suite.py','-q')
@@ -541,31 +541,31 @@ Stage03 と Stage04 は、WebUI 中心の E2E 経路で確認します。runner 
 .\scripts\ps1\test_e2e_suite.ps1 -Case stage01_scenario04_calculator_basic
 ```
 
-## WebUI の常駐キャプチャサービス
+## WebUI persistent capture service
 
-日付: 2026-07-05
+Date: 2026-07-05
 
-観測した問題:
+Problem observed:
 
-- `/api/command` 実行中に WebUI JavaScript の polling が `/api/screenshot` を更新すると、Computer Use 用の screenshot capture が `failed to open capture device: /dev/video0` で失敗することがありました。
-- `ffplay` と WebUI 初期画面は正常だったため、原因は hardware や device ID ではなさそうでした。危険だったのは、複数経路からの capture request ごとに `/dev/video0` を開閉していた流れです。
-- HDMI capture device を開き直すと、対象 PC 側が display の切断/再接続を検出し、画面点滅や追加 warmup frames が必要になることがあります。
+- When WebUI JavaScript polling refreshed `/api/screenshot` while `/api/command` was running, Computer Use screenshot capture could fail with `failed to open capture device: /dev/video0`.
+- `ffplay` and the initial WebUI screen were healthy, so the likely cause was not hardware or device ID. The risky flow was opening and closing `/dev/video0` for every capture request from multiple paths.
+- Reopening the HDMI capture device can also make the target PC detect a display disconnect/reconnect, causing screen flash and requiring more warmup frames.
 
-最終設計:
+Final design:
 
-- WebUI mode は app startup 時に `CaptureService` thread を 1 つ起動します。
-- service は `/dev/video0` を一度だけ開き、frame を継続的に読み、最新 frame を memory に保持します。
-- `/api/screenshot` と Computer Use screenshot response は、どちらも同じ最新 frame を読みます。
-- device open/close は WebUI app の startup/shutdown だけで行います。CLI の capture-only 経路は one-shot capture のままでよいです。
-- WebUI E2E runner は WebUI case ごとに service を起動し、case 終了後に止めます。これにより、Stage03/Stage04 test が case 間で capture handle を残しません。
-- WebUI E2E の開始前に、runner は `python3 app.py` がすでに動いていないか確認します。起動済みの WebUI app が `/dev/video0` を保持していると、test app が capture device を開けなくなります。
+- WebUI mode starts one `CaptureService` thread at app startup.
+- The service opens `/dev/video0` once, continuously reads frames, and keeps the latest frame in memory.
+- `/api/screenshot` and Computer Use screenshot responses both read from the same latest frame.
+- Device open/close should happen only at WebUI app startup/shutdown. CLI capture-only paths may still use one-shot capture.
+- WebUI E2E runner starts the service for WebUI cases and stops it after each case, so Stage03/Stage04 tests do not leave a capture handle open between cases.
+- Before WebUI E2E starts, the runner checks whether `python3 app.py` is already running. A previously opened WebUI app can hold `/dev/video0` and make the test app fail to open the capture device.
 
-追加した回帰テスト:
+Regression tests added:
 
-- `tests/unit/test_capture_service.py` は、`CaptureService` が `VideoCapture` を一度だけ開き、更新 frame を配信し、stop 時に device を release することを検証します。
-- `tests/unit/test_app_operation_log.py` は、`/api/screenshot` が共有 service を使い、`/api/command` がその service を Computer Use へ渡すことを検証します。
+- `tests/unit/test_capture_service.py` verifies that `CaptureService` opens `VideoCapture` once, serves updated frames, and releases the device on stop.
+- `tests/unit/test_app_operation_log.py` verifies `/api/screenshot` uses the shared service and `/api/command` passes that service to Computer Use.
 
-検証コマンド:
+Validation commands:
 
 ```powershell
 .\scripts\ps1\test_pytest_call_only_on_pi.ps1 -PytestArgs @('tests/unit','-q')
@@ -573,32 +573,32 @@ Stage03 と Stage04 は、WebUI 中心の E2E 経路で確認します。runner 
 .\scripts\ps1\test_e2e_suite.ps1 -Case stage04_scenario08_webui_request_open_browser
 ```
 
-追加の live-server 確認:
+Additional live-server check:
 
-- Pi5 上で `python3 app.py --host 127.0.0.1 --port 18083` を起動しました。
-- `open browser` を `/api/command` へ post している間、0.5 秒ごとに `/api/screenshot` を poll しました。
-- 結果: command は 200 を返し、polling screenshot はすべて 200、最後の screenshot も 200 を返しました。
+- Started `python3 app.py --host 127.0.0.1 --port 18083` on the Pi5.
+- Polled `/api/screenshot` every 0.5 seconds while posting `/api/command` with `open browser`.
+- Result: command returned 200, all polling screenshots returned 200, and the final screenshot returned 200.
 
-## WebUI の操作画面とログ画面の分割
+## WebUI operation/log split
 
-日付: 2026-07-05
+Date: 2026-07-05
 
-capture と command controls の横に user / operation / system log をすべて表示すると、WebUI の top screen が混みすぎました。現在の UI は 2 つの view に分けています。
+The WebUI top screen became crowded once user, operation, and system logs were all shown beside the capture and command controls. The UI is now split into two views:
 
-- 操作画面: キャプチャ画面、Request / Plan / Manual HID のコマンドモード、状態、suspend/resume、emergency stop。
-- ログ画面: 更新と日時検索コントロール、User Log、Operation Log、詳細タイムライン、token usage bar graph。
+- Operation view: capture screen, Request / Plan / Manual HID command modes, status, suspend/resume, and emergency stop.
+- Logs view: Refresh and Date/Time search controls, User Log, Operation Log, detailed timeline, and a token usage bar graph.
 
-データの流れ:
+Data flow:
 
-- ログ画面は `/api/logs/detail` 経由で SQLite から読みます。
-- `system_log` は、それまで memory-only だった system event を永続化します。
-- `token_usage_log` は Computer Use response ごとの token usage を保存します。OpenAI usage metadata がない場合、usage を 0 として黙って扱わず、`system_log.event=token_usage/status=unknown` と estimated token count を記録します。
-- token graph は CDN dependency ではなく CSS/JavaScript の local bars で描画します。これにより Pi5 WebUI が閉じた LAN 環境でも動きます。
-- User Log、Operation Log、詳細 timeline、token graph はすべて newest-first で表示します。
-- token graph row は左側 log row の timestamp を使います。各 bar は、時系列で 1 つ前の左側 log timestamp の後から現在の左側 log timestamp までに消費した total tokens を示します。
-- Logs toolbar は全期間と現在の browser-local month の consumed tokens aggregate を表示します。From/To が設定されている場合は、その filtered range の aggregate も表示します。これらの total は、表示中の 500 log rows を合計せず、`/api/tokens` で SQLite から query します。
+- The Logs view reads from SQLite through `/api/logs/detail`.
+- `system_log` stores persistent system events that used to be memory-only.
+- `token_usage_log` stores per-Computer-Use response token usage. When OpenAI usage metadata is missing, the system records `system_log.event=token_usage/status=unknown` and an estimated token count instead of silently treating the usage as zero.
+- The token graph is rendered locally with CSS/JavaScript bars instead of a CDN dependency so the Pi5 WebUI works in a closed LAN environment.
+- User Log, Operation Log, the detailed timeline, and the token graph are all displayed newest-first.
+- Token graph rows use the left-side log row timestamps. Each bar shows the total tokens consumed after the chronologically previous left-side log timestamp and up to the current left-side log timestamp.
+- The Logs toolbar shows aggregate consumed tokens for all time and the current browser-local month. When From/To is set, it also shows the aggregate for that filtered range. These totals are queried from SQLite with `/api/tokens` instead of being summed from the 500 visible log rows.
 
-検証:
+Validation:
 
 ```powershell
 .\scripts\ps1\test_pytest_call_only_on_pi.ps1 -PytestArgs @('tests/unit','-q')
@@ -607,159 +607,159 @@ capture と command controls の横に user / operation / system log をすべ�
 .\scripts\ps1\test_e2e_suite.ps1 -Case stage04_scenario04_log_panes
 ```
 
-## Pi パッケージ構成の整理
+## Pi package layout refactor
 
-日付: 2026-07-05
+Date: 2026-07-05
 
-Stage04 の WebUI 作業後、`pi/app.py` と E2E files は entrypoint と implementation が混ざった module になっていました。現在の Pi 側は、`pi/pico_hid_bridge/` 配下で feature ごとに整理しています。
+After Stage04 WebUI work, `pi/app.py` and the E2E files had grown into mixed entrypoint/implementation modules. The Pi side is now organized by feature under `pi/pico_hid_bridge/`:
 
-- `pico_hid_bridge/web/`: Flask WebUI implementation と HTML/CSS/JavaScript template。
-- `pico_hid_bridge/cli/`: Computer Use controller などの CLI implementation。
-- `pico_hid_bridge/e2e/`: E2E model、case definitions、runner implementation。
-- `pi/tools/`: hardware-check と test helper command implementation。
+- `pico_hid_bridge/web/`: Flask WebUI implementation and the HTML/CSS/JavaScript template.
+- `pico_hid_bridge/cli/`: CLI implementations such as the Computer Use controller.
+- `pico_hid_bridge/e2e/`: E2E model, case definitions, and runner implementation.
+- `pi/tools/`: hardware-check and test helper command implementations.
 
-旧 `pi/app.py`、`pi/controller.py`、`pi/e2e_cases.py`、`pi/e2e_hid_runner.py`、`pi/run_e2e_case.py`、`pi/run_e2e_suite.py` は、薄い compatibility entrypoint / import wrapper として残します。新しい implementation code はそれらの wrapper ではなく feature package 側へ追加します。
+The old `pi/app.py`, `pi/controller.py`, `pi/e2e_cases.py`, `pi/e2e_hid_runner.py`, `pi/run_e2e_case.py`, and `pi/run_e2e_suite.py` files remain as thin compatibility entrypoints/import wrappers. Add new implementation code to the feature packages, not to those wrappers.
 
-## Stage05 プランニングラッパー
+## Stage05 planning wrapper
 
-日付: 2026-07-05
+Date: 2026-07-05
 
-実装意図:
+Implementation intent:
 
-- Stage05 は既存の Computer Use flow を置き換えずに planning を追加します。
-- 新しい wrapper は 1 つの user request を受け取り、OpenAI API に JSON plan を依頼し、返ってきた各 step を通常の Request mode と同じ `execute_computer_use_request` 経路へ送ります。
-- planner は低レベル HID command を出してはいけません。生の `KEY`、`TEXT`、`MOUSE_MOVE`、`CLICK` command は Manual HID の責務です。
-- prompt は generic に保ちます。単一の E2E scenario 向けに tuning せず、挙動が悪い場合は execution code を変える前に generic planning prompt を見直します。
+- Stage05 adds planning without replacing the existing Computer Use flow.
+- The new wrapper takes one user request, asks the OpenAI API for a JSON plan, then sends each returned step through the same `execute_computer_use_request` path used by normal Request mode.
+- The planner must not emit low-level HID commands. Raw `KEY`, `TEXT`, `MOUSE_MOVE`, and `CLICK` commands remain Manual HID concerns.
+- Keep the prompt generic. Do not tune it for a single E2E scenario; when behavior is poor, revise the generic planning prompt before changing execution code.
 
-Prompt / API の教訓:
+Prompt/API lessons:
 
-- planning request は、`risk_level`、`requires_approval`、`summary`、`steps` を持つ `pc_operation_plan` schema の structured JSON output を使います。
-- 各 step は既存 Computer Use executor 向けの自然言語 instruction であり、Pico 向けの action list ではありません。
-- planner request では reasoning effort を有効にし、model が multi-step decomposition を考えてから JSON result を出せるようにします。
-- prompt では keyboard-friendly な Windows workflow を強く優先します。application 起動は `WIN+R`、active window 切り替えは `ALT+TAB` を使います。
-- Computer Use prompt には、未対応 HID choices を明示する必要があります。Stage05 で `PAGEDOWN` と `drag` action が露出したため、prompt は supported keys を列挙し、page navigation keys や drag を使わないよう明記しています。
-- Computer Use は research / summarize step に対して、PC を操作せず自然言語で答えることがあります。WebUI execution path は、computer tool actions を使い、summary を物理 PC へ type するよう強めた instruction で 1 回 retry します。
-- Computer Use は summary 用に長い、または multiline の `type` action を出すことがあります。`ActionExecutor` は multiline text を `TEXT` と `KEY ENTER` に分け、長文 text を 256 文字の `TEXT` line に分割します。その下の UART layer が各 line を 20 文字の Pico batch に分けます。
-- expected-failure planning prompt は generic なままにします。division by zero は数学的に undefined と扱い、明示的に service が動いていない localhost / loopback navigation は unavailable / risky と扱います。
+- The planning request uses structured JSON output with a `pc_operation_plan` schema containing `risk_level`, `requires_approval`, `summary`, and `steps`.
+- Each step is a natural-language instruction for the existing Computer Use executor, not an action list for Pico.
+- The planner request enables reasoning effort so the model can think through multi-step decomposition before emitting the JSON result.
+- The prompt strongly prefers keyboard-friendly Windows workflows, including `WIN+R` for opening applications and `ALT+TAB` for switching active windows.
+- The Computer Use prompt must name unsupported HID choices explicitly. Stage05 exposed `PAGEDOWN` and `drag` actions, so the prompt now lists supported keys and says not to use page navigation keys or drag.
+- Computer Use may answer a research/summarize step with natural language instead of controlling the PC. The WebUI execution path retries once with a stronger instruction to use computer tool actions and type the summary into the physical PC.
+- Computer Use may emit long or multiline `type` actions for summaries. `ActionExecutor` splits multiline text into `TEXT` plus `KEY ENTER`, and splits long text into 256-character `TEXT` lines before the lower UART layer chunks each line into 20-character Pico batches.
+- Expected-failure planning prompts should stay generic. Division by zero is treated as mathematically undefined, and localhost/loopback navigation without an explicitly running service is treated as unavailable/risky.
 
-安全性と現在の制限:
+Safety/current limits:
 
-- `risk_level=high` または `requires_approval=true` は、Computer Use step 実行前にブロックします。
-- Stage05 では後続の approval flow は実装しません。それは Stage06 の範囲です。
-- 未対応の freehand mouse drawing、存在しない app、到達不能 URL、不可能な計算は、E2E では expected-failure path として扱います。
+- `risk_level=high` or `requires_approval=true` is blocked before any Computer Use step executes.
+- Stage05 does not implement the later approval flow; that remains Stage06.
+- Unsupported freehand mouse drawing, nonexistent apps, unreachable URLs, and impossible calculations are treated as expected-failure paths in E2E.
 
-追加した回帰テスト:
+Regression tests added:
 
-- `tests/unit/test_planning.py` は prompt requirements、JSON parsing、OpenAI Responses API call shape をカバーします。
-- `tests/unit/test_app_operation_log.py` は WebUI Plan mode が `execute_planned_request` を通ることと high-risk plan blocking をカバーします。
-- `tests/unit/test_e2e_case_definitions.py` は Stage05 の全 case が実装済みであることを検証します。
-- `tests/unit/test_e2e_hid_runner.py` は Stage05 が WebUI E2E runner を使うことを検証します。
+- `tests/unit/test_planning.py` covers prompt requirements, JSON parsing, and OpenAI Responses API call shape.
+- `tests/unit/test_app_operation_log.py` covers WebUI Plan mode routing through `execute_planned_request` and blocking high-risk plans.
+- `tests/unit/test_e2e_case_definitions.py` verifies all Stage05 cases are implemented.
+- `tests/unit/test_e2e_hid_runner.py` verifies Stage05 uses the WebUI E2E runner.
 
-## Stage06 承認フロー
+## Stage06 approval flow
 
-日付: 2026-07-05
+Date: 2026-07-05
 
-実装意図:
+Implementation intent:
 
-- Stage06 では、high-risk planning を hard stop ではなく approval-pending pause に変更します。plan は memory に保持し、user が approve するまで Computer Use step は実行しません。
-- Approval は既存の Suspend / Resume controls とは別です。approval pending 中は Suspend と Resume を disabled / blocked にし、operation approval と混同されないようにします。
-- Emergency Stop は approval pending 中も利用可能で、pending approval を `cancelled_by_emergency_stop` としてキャンセルします。
-- CLI planning も同じ safety gate を持ちます。`controller.py --planning ...` は、`--approve-risk` が渡されない限り high-risk plan や approval-required plan を拒否します。
+- Stage06 changes high-risk planning from a hard stop into an approval-pending pause. The plan is held in memory and no Computer Use step runs until the user approves it.
+- Approval is separate from the existing Suspend/Resume controls. While approval is pending, Suspend and Resume are disabled/blocked so they cannot be confused with approving the operation.
+- Emergency Stop remains available during approval pending and cancels the pending approval as `cancelled_by_emergency_stop`.
+- CLI planning has the same safety gate. `controller.py --planning ...` refuses high-risk or approval-required plans unless `--approve-risk` is passed.
 
-教訓:
+Lessons:
 
-- high-risk planner response には、model が approval なしでは進めるべきでないと判断した結果、実行可能 step が 0 件になる正当な case があります。これらは JSON parsing failure にせず、approval-required step を 1 つ合成して valid approval-required plan として扱います。
-- WebUI `/api/command` は high-risk plan に対して `approval_pending=true` 付きの HTTP 200 を返します。request 自体は成功させつつ、execution が pause したことを明確に示します。
-- `/api/approve` は既存の planned-step Computer Use path を通って再開します。`/api/reject` と approval timeout は、target PC に触れず pending plan を clear します。
-- Stage06 WebUI E2E runner は、approval blocking を green と扱う前に、`/api/status`、operation logs、Suspend / Resume の 409 response で safety state を検証します。
+- Some high-risk planner responses legitimately contain no executable steps because the model decides the operation should not proceed without approval. Treat these as valid approval-required plans by synthesizing a single approval-required step instead of failing JSON parsing.
+- WebUI `/api/command` returns HTTP 200 with `approval_pending=true` for high-risk plans. This keeps the request successful while clearly showing that execution has paused.
+- `/api/approve` resumes through the existing planned-step Computer Use path. `/api/reject` and approval timeout clear the pending plan without touching the target PC.
+- The Stage06 WebUI E2E runner verifies the safety state through `/api/status`, operation logs, and Suspend/Resume 409 responses before treating approval blocking as green.
 
-追加した回帰テスト:
+Regression tests added:
 
-- `tests/unit/test_app_operation_log.py` は high-risk approval pending、approve execution、reject、timeout、approval state 用 WebUI controls をカバーします。
-- `tests/unit/test_controller.py` は CLI planning refusal と `--approve-risk` execution をカバーします。
-- `tests/unit/test_planning.py` は empty step list を持つ high-risk response をカバーします。
-- `tests/unit/test_e2e_case_definitions.py` は Stage06 の全 case が実装済みであることを検証します。
-- `tests/unit/test_e2e_hid_runner.py` は Stage06 が WebUI E2E runner を使うことを検証します。
+- `tests/unit/test_app_operation_log.py` covers high-risk approval pending, approve execution, reject, timeout, and the WebUI controls for approval state.
+- `tests/unit/test_controller.py` covers CLI planning refusal and `--approve-risk` execution.
+- `tests/unit/test_planning.py` covers high-risk responses with empty step lists.
+- `tests/unit/test_e2e_case_definitions.py` verifies all Stage06 cases are implemented.
+- `tests/unit/test_e2e_hid_runner.py` verifies Stage06 uses the WebUI E2E runner.
 
-## Stage07 メール通知
+## Stage07 email notification
 
-日付: 2026-07-05
+Date: 2026-07-05
 
-実装意図:
+Implementation intent:
 
-- Stage07 は既存の Computer Use / HID execution path を変えずに SMTP email notification を追加します。
-- WebUI は operation completion、emergency stop、approval request、command error、suspend、resume に対して email notification を出します。
-- notification failure は main operation を失敗させません。`notification_log` に `sent`、`failed`、`skipped`、`rate_limited` として記録します。
-- email recipient は `[email].to_addrs` で設定できます。空の場合は `/home/nama/mail-send-vert.txt` の SMTP sender account を recipient として使います。これは Stage07 の test rule です。
-- `[email].delivery = "console"` は SMTP を開かず、email を stdout に出力して `sent` を記録します。Stage07 E2E は external email delivery を避けるため、この mode を使います。
+- Stage07 adds SMTP email notification without changing the existing Computer Use/HID execution paths.
+- The WebUI emits email notifications for operation completion, emergency stop, approval request, command error, suspend, and resume.
+- Notification failures never fail the main operation. They are recorded in `notification_log` with `sent`, `failed`, `skipped`, or `rate_limited`.
+- The email recipient is configurable through `[email].to_addrs`. When it is empty, the SMTP sender account from `/home/nama/mail-send-vert.txt` is used as the recipient, which is the Stage07 test rule.
+- `[email].delivery = "console"` prints the email to stdout and records `sent` without opening SMTP. Stage07 E2E uses this mode to avoid external email delivery.
 
-SMTP の教訓:
+SMTP lessons:
 
-- Pi5 account file は `STARTTLS`、`SMTP_SERVER`、`SMTP_PORT`、`SENDER_MAIL`、`SMTP_PASSWORD` を使います。
-- SMTP password は config file や log にコピーしません。parser は SMTP login call のためだけに読みます。
-- STARTTLS では sample code に合わせ、login 前に `ehlo()`、`starttls()`、`ehlo()` が必要です。
-- screenshot attachment が `[email].attachment_limit_mb` を超える場合は添付を省略します。notification 自体は送信し、`attachment_policy=omitted` を記録します。
-- 同じ event と recipient に対する duplicate notification は `[email].min_interval_sec` の間は抑制します。
+- The Pi5 account file uses `STARTTLS`, `SMTP_SERVER`, `SMTP_PORT`, `SENDER_MAIL`, and `SMTP_PASSWORD`.
+- Do not copy SMTP passwords into config files or logs. The parser reads them only for the SMTP login call.
+- STARTTLS requires `ehlo()`, `starttls()`, and `ehlo()` before login, matching the sample code.
+- Screenshot attachments are omitted when they exceed `[email].attachment_limit_mb`; the notification still sends and records `attachment_policy=omitted`.
+- Duplicate notifications for the same event and recipient are suppressed for `[email].min_interval_sec`.
 
-追加した回帰テスト:
+Regression tests added:
 
-- `tests/unit/test_notifications.py` は SMTP account parsing、self-recipient fallback、success logging、disabled logging、rate limiting、auth failure logging、attachment omission をカバーします。
-- `tests/unit/test_operation_log.py` は `notification_log` persistence と query をカバーします。
-- `tests/unit/test_e2e_case_definitions.py` は Stage07 の全 case が実装済みであることを検証します。
-- `tests/unit/test_e2e_hid_runner.py` は Stage07 が WebUI E2E runner を使うことを検証します。
+- `tests/unit/test_notifications.py` covers SMTP account parsing, self-recipient fallback, success logging, disabled logging, rate limiting, auth failure logging, and attachment omission.
+- `tests/unit/test_operation_log.py` covers `notification_log` persistence and query.
+- `tests/unit/test_e2e_case_definitions.py` verifies all Stage07 cases are implemented.
+- `tests/unit/test_e2e_hid_runner.py` verifies Stage07 uses the WebUI E2E runner.
 
-検証メモ:
+Validation note:
 
-- Stage07 E2E は `.\scripts\ps1\test_e2e_suite.ps1 -Stage stage07_email_notification` で実行します。
-- 最初の実装では real SMTP delivery を試しましたが、operational details や screenshots を外部送信し得るため escalation review で拒否されました。現在の E2E runner は Stage07 success case で console delivery を強制し、auth-failure case では local failing SMTP class を注入します。これにより external email なしで stage をテストできます。
+- Stage07 E2E is run with `.\scripts\ps1\test_e2e_suite.ps1 -Stage stage07_email_notification`.
+- The first implementation attempted real SMTP delivery and was rejected by escalation review because it could send operational details or screenshots externally. The E2E runner now forces console delivery for Stage07 success cases and injects a local failing SMTP class for the auth-failure case, so the stage can be tested without external email.
 
-## Stage08 長時間操作状態
+## Stage08 long-running state
 
-日付: 2026-07-05
+Date: 2026-07-05
 
-実装意図:
+Implementation intent:
 
-- Stage08 は主に既存 WebUI runtime safety の確認 layer です。この stage では real long-running executor を追加しません。
-- WebUI は `/api/status` に structured `long_operation` object を出します。そこには progress counters、current step、estimated percent、warning、cancellation、screen-drift、resume-verification flags が含まれます。
-- long-operation の suspend state は `[app].runtime_dir` 配下の `runtime_state.json` に永続化します。これにより、新しい Flask app instance が suspended progress state を restore できます。
-- `/api/suspend`、`/api/resume`、`/api/cancel` は、既存の Computer Use と HID execution path を変えずに long-operation state を更新します。
-- `/api/long-operation-test` は、target PC に artificial long operation を強制せず long-running state を exercise するための Stage08 E2E 用 fixture endpoint です。
+- Stage08 is mostly a confirmation layer over existing WebUI runtime safety. Avoid adding a real long-running executor in this stage.
+- The WebUI now exposes a structured `long_operation` object in `/api/status` with progress counters, current step, estimated percent, warning, cancellation, screen-drift, and resume-verification flags.
+- Long-operation suspend state is persisted in `runtime_state.json` under `[app].runtime_dir`, so a new Flask app instance can restore the suspended progress state.
+- `/api/suspend`, `/api/resume`, and `/api/cancel` update long-operation state without changing the existing Computer Use and HID execution paths.
+- `/api/long-operation-test` is a small fixture endpoint used by Stage08 E2E to exercise long-running state without forcing the target PC through artificial long operations.
 
-教訓:
+Lessons:
 
-- screen drift 後の Resume は通常の Resume を使いません。approval pending に入り、`resume_requires_verification=true` を保持します。
-- UI は既存の Status key/value panel で progress を表示できます。大きな frontend refactor は不要です。
-- Scenario 6 は expected-failure style の safety check のままです。failed long-plan step は記録される必要があり、盲目的に続行してはいけません。
+- Resume after screen drift should not use normal Resume. It enters approval pending and keeps `resume_requires_verification=true`.
+- The UI can show progress with the existing Status key/value panel; no large frontend refactor is needed.
+- Scenario 6 remains an expected-failure style safety check: a failed long-plan step must be recorded and must not continue blindly.
 
-追加した回帰テスト:
+Regression tests added:
 
-- `tests/unit/test_app_operation_log.py` は long-operation progress、suspend/resume、cancel、screen-drift approval、restart persistence をカバーします。
-- `tests/unit/test_e2e_case_definitions.py` は Stage08 の全 case が実装済みであることを検証します。
-- `tests/unit/test_e2e_hid_runner.py` は Stage08 が WebUI E2E runner を使うことを検証します。
+- `tests/unit/test_app_operation_log.py` covers long-operation progress, suspend/resume, cancel, screen-drift approval, and restart persistence.
+- `tests/unit/test_e2e_case_definitions.py` verifies all Stage08 cases are implemented.
+- `tests/unit/test_e2e_hid_runner.py` verifies Stage08 uses the WebUI E2E runner.
 
-## Stage09 トークン予算
+## Stage09 token budget
 
-日付: 2026-07-05
+Date: 2026-07-05
 
-実装意図:
+Implementation intent:
 
-- Stage09 では、既存 Logs page の token display を正とします。`SYSTEM LOG` と `TOKEN GRAPH` は timestamp rows で連動したままで、独立した token dashboard はこの stage では不要です。
-- `[token_budget]` は rough token budgeting を制御します。項目は `baseline_tokens_per_operation`、`max_tokens_per_operation`、`max_tokens_per_step`、`max_tokens_per_plan`、`max_tokens_per_day` です。
-- plan prediction は `token_usage_log` の recent rows を baseline として使います。sample がない場合は `baseline_tokens_per_operation` に fallback します。
-- `/api/tokens/predict` は multi-step plan の rough estimate を公開し、latest prediction を `/api/status` に `token_prediction` として保存します。
-- `/api/tokens/check-budget` は新しい pause mechanism を作らず、over-budget plan を既存の approval-pending flow へ送ります。
-- OpenAI usage metadata がない場合、黙って 0 扱いしません。`usage_known=false` として記録し、`system_log.event=token_usage/status=unknown` に log し、estimated token count を付けます。
+- Stage09 keeps the existing Logs page token display as the source of truth. `SYSTEM LOG` and `TOKEN GRAPH` remain linked by timestamp rows; no separate token dashboard is required for this stage.
+- `[token_budget]` controls rough token budgeting: `baseline_tokens_per_operation`, `max_tokens_per_operation`, `max_tokens_per_step`, `max_tokens_per_plan`, and `max_tokens_per_day`.
+- Plan prediction uses recent rows in `token_usage_log` as the baseline. If no sample exists, it falls back to `baseline_tokens_per_operation`.
+- `/api/tokens/predict` exposes the rough estimate for multi-step plans and stores the latest prediction in `/api/status` as `token_prediction`.
+- `/api/tokens/check-budget` sends over-budget plans into the existing approval-pending flow instead of inventing a new pause mechanism.
+- Missing OpenAI usage metadata is not silently treated as zero. It is recorded as `usage_known=false`, logged as `system_log.event=token_usage/status=unknown`, and given an estimated token count.
 
-教訓:
+Lessons:
 
-- Stage09 scenarios は当初、top operation screen に token totals が出る前提でした。logs refactor 後の受け入れ表示は、現在の Logs page における `SYSTEM LOG` と `TOKEN GRAPH` の組み合わせ、および `/api/tokens` からの aggregate totals です。
-- E2E では、OpenAI tokens を消費せず token accounting を検証するため、WebUI fixture endpoints の `/api/tokens/record-test`、`/api/tokens/missing-usage-test`、`/api/tokens/predict`、`/api/tokens/check-budget` を使います。
-- budget approval は Stage06 の approval state を再利用します。token budget approval pending 中も、通常の Suspend / Resume behavior は既存 approval-pending block に従います。
-- daily totals は `/api/tokens?from=...&to=...` を query してテストします。これにより、reset behavior は browser-local rendering ではなく stored timestamps に結び付きます。
+- The Stage09 scenarios originally assumed token totals on the top operation screen. After the logs refactor, the accepted display is the current Logs page pairing of `SYSTEM LOG` and `TOKEN GRAPH`, plus aggregate totals from `/api/tokens`.
+- For E2E, use WebUI fixture endpoints to validate token accounting without spending OpenAI tokens: `/api/tokens/record-test`, `/api/tokens/missing-usage-test`, `/api/tokens/predict`, and `/api/tokens/check-budget`.
+- Budget approval should reuse Stage06 approval state. While token budget approval is pending, normal Suspend/Resume behavior remains governed by the existing approval-pending block.
+- Daily totals are tested by querying `/api/tokens?from=...&to=...`; this keeps the reset behavior tied to stored timestamps rather than browser-local rendering.
 
-追加した回帰テスト:
+Regression tests added:
 
-- `tests/unit/test_config.py` は token budget config が存在することを検証します。
-- `tests/unit/test_app_operation_log.py` は plan token prediction、over-budget approval pending、missing usage warnings、unknown usage extraction をカバーします。
-- `tests/unit/test_e2e_case_definitions.py` は Stage09 の全 case が実装済みであることを検証します。
-- `pi/pico_hid_bridge/e2e/runner.py` は Stage09 WebUI E2E scenarios をすべて実装しています。
+- `tests/unit/test_config.py` verifies the token budget config exists.
+- `tests/unit/test_app_operation_log.py` covers plan token prediction, over-budget approval pending, missing usage warnings, and unknown usage extraction.
+- `tests/unit/test_e2e_case_definitions.py` verifies all Stage09 cases are implemented.
+- `pi/pico_hid_bridge/e2e/runner.py` implements all Stage09 WebUI E2E scenarios.

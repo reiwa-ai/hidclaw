@@ -8,25 +8,12 @@ from typing import Any
 from openai import OpenAI
 
 from .capture import capture_png_base64
+from .intent import AgentIntent, analyze_user_intent, build_intent_prompt_block
+from .prompt_assets import DEFAULT_COMPUTER_PROMPT
 
 
 DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
 DEFAULT_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5")
-DEFAULT_COMPUTER_PROMPT = (
-    "You are controlling a physical PC through an HDMI capture and a limited "
-    "USB HID keyboard/mouse bridge. Return only safe, minimal actions. "
-    "Use a keyboard-first strategy. Prefer screenshot, keypress, type, or wait. "
-    "Avoid mouse move, click, and double_click unless keyboard operation is clearly impossible. "
-    "Do not use drag or scroll actions. "
-    "When opening an application, use WIN+R, type the program name, and press ENTER. "
-    "When switching active applications or windows, use ALT+TAB or other keyboard shortcuts. "
-    "Use only supported keypress names: ENTER, ESC, BACKSPACE, TAB, SPACE, DELETE, F1-F12, letters, "
-    "digits, and WIN/CTRL/SHIFT/ALT combinations. Do not use PAGEUP, PAGEDOWN, HOME, END, or arrow keys. "
-    "Keep type actions short ASCII and avoid multiline type actions when possible. "
-    "Use ASCII English input for typed text. "
-    "Never answer the task in natural language; use computer tool actions until the requested PC state is achieved. "
-    "Use the computer tool for UI interaction."
-)
 
 
 def attr(value: Any, name: str, default: Any = None) -> Any:
@@ -39,9 +26,46 @@ def computer_tool(args: Any) -> dict[str, str]:
     return {"type": "computer"}
 
 
-def build_computer_use_input(task: str, *, prompt: str | None = None) -> str:
+def build_computer_use_input(
+    task: str,
+    *,
+    prompt: str | None = None,
+    intent: AgentIntent | None = None,
+) -> str:
+    if prompt is not None and intent is None:
+        return f"{prompt.strip()}\n\nTask: {task}"
+
     base_prompt = (prompt or DEFAULT_COMPUTER_PROMPT).strip()
-    return f"{base_prompt}\n\nTask: {task}"
+    resolved_intent = intent or analyze_user_intent(task)
+    return "\n\n".join(
+        [
+            base_prompt,
+            build_intent_prompt_block(resolved_intent, heading="Execution context"),
+            f"Task: {resolved_intent.user_instruction or task}",
+        ]
+    )
+
+
+def build_retry_input(
+    task: str,
+    previous_answer: str,
+    *,
+    prompt: str | None = None,
+    intent: AgentIntent | None = None,
+) -> str:
+    base = build_computer_use_input(task, prompt=prompt, intent=intent)
+    return "\n\n".join(
+        [
+            base,
+            (
+                "Correction: Never answer the task in natural language. "
+                "Use computer tool actions now. If the task asks you to write or summarize text, "
+                "open a text editor and type a short ASCII version on the physical PC. "
+                "Avoid unsupported drag and scroll actions."
+            ),
+            f"Previous answer: {previous_answer or '(empty response)'}",
+        ]
+    )
 
 
 def create_initial_response(
@@ -51,11 +75,12 @@ def create_initial_response(
     task: str,
     args: Any,
     prompt: str | None = None,
+    intent: AgentIntent | None = None,
 ) -> Any:
     return client.responses.create(
         model=model,
         tools=[computer_tool(args)],
-        input=build_computer_use_input(task, prompt=prompt),
+        input=build_computer_use_input(task, prompt=prompt, intent=intent),
     )
 
 

@@ -2,12 +2,6 @@
 
 この文書は、Raspberry Pi 5 実機を使ったテスト手順と接続情報をまとめる。
 
-## 操作対象PC
-
-操作対象PCはWindows PC。
-
-操作対象PCには予めchromeインストール済み、c:\Users\user\Pictures\test.pngに「This is test.」と書かれた画像が配置されている。
-
 ## 接続先
 
 ```text

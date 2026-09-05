@@ -10,14 +10,6 @@ docs/TEST_PROGRAM_SPEC.md   詳細テスト仕様書
 docs/TESTING.md             実機テスト環境メモ
 ```
 
-テスト環境:
-
-```text
-[開発マシン(Codex PC)] ==== Network === [Raspberry Pi5 (192.168.11.6)]
-                                      [↑GPIO/UART] ===== Serial ===== [Raspberry Pi Pico] ==== USB === [PC]
-                                      [↑USB Capture Board] ================ HDMI Cable =============== [↑ ] 
-```
-
 ## 目的
 
 TDD で本実装を進めるため、先に以下を満たすテスト基盤を完成させる。

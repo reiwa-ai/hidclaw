@@ -33,8 +33,10 @@ from pico_hid_bridge.computer_use import (
 )
 from pico_hid_bridge.config import load_config
 from pico_hid_bridge.hid import DEFAULT_BAUDRATE, DEFAULT_PORT, DEFAULT_TIMEOUT
+from pico_hid_bridge.intent import analyze_user_intent
 from pico_hid_bridge.paths import PI_DIR
 from pico_hid_bridge.planning import PlanningService
+from pico_hid_bridge.prompt_assets import get_prompt_text
 
 
 DEFAULT_OUTPUT_DIR = PI_DIR / "captures"
@@ -187,8 +189,9 @@ def main(argv: list[str]) -> int:
         return run_planned_cli(argv)
     config = load_config(args.config)
     openai_cfg = config.get("openai", {})
-    computer_prompt = args.computer_prompt or str(openai_cfg.get("computer_prompt", "")).strip() or None
+    computer_prompt = args.computer_prompt or get_prompt_text(config, "computer_prompt")
     task = " ".join(args.task)
+    intent = analyze_user_intent(task)
 
     try:
         if args.capture_only:
@@ -220,6 +223,7 @@ def main(argv: list[str]) -> int:
             task=task,
             args=args,
             prompt=computer_prompt,
+            intent=intent,
         )
     except Exception as exc:
         print(f"controller failed: {exc}", file=sys.stderr)

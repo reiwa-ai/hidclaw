@@ -6,9 +6,12 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from .computer_use import DEFAULT_COMPUTER_PROMPT
 from .hid import DEFAULT_BAUDRATE, DEFAULT_PORT, DEFAULT_TIMEOUT
-from .planning import DEFAULT_PLANNING_PROMPT
+from .prompt_assets import (
+    DEFAULT_COMPUTER_PROMPT,
+    DEFAULT_PLANNING_PROMPT,
+    DEFAULT_PROMPTS_FILE,
+)
 
 try:
     import tomllib
@@ -47,6 +50,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "model": "gpt-5.5",
         "api_timeout": 60.0,
         "max_action_turns": 5,
+        "max_completion_rounds": 3,
+        "max_verify_turns": 5,
+        "prompts_file": str(DEFAULT_PROMPTS_FILE).replace("\\", "/"),
         "computer_prompt": DEFAULT_COMPUTER_PROMPT,
         "planning_model": "gpt-5.5",
         "planning_prompt": DEFAULT_PLANNING_PROMPT,

@@ -228,6 +228,7 @@ def test_webui_plan_mode_records_token_prediction_before_execution(
         capture_service: object | None = None,
         progress: object | None = None,
         should_stop: object | None = None,
+        **kwargs: object,
     ) -> str:
         return "computer use actions sent: 1"
 
@@ -343,6 +344,7 @@ def test_webui_command_uses_computer_use_request(
         event_sink: object,
         progress: object | None = None,
         should_stop: object | None = None,
+        **kwargs: object,
     ) -> str:
         requests.append(instruction)
         return "computer use actions sent: 3"
@@ -388,6 +390,7 @@ def test_webui_command_passes_shared_capture_service_to_computer_use(
         capture_service: object | None = None,
         progress: object | None = None,
         should_stop: object | None = None,
+        **kwargs: object,
     ) -> str:
         services.append(capture_service)
         return "computer use actions sent: 1"
@@ -440,6 +443,7 @@ def test_webui_plan_mode_executes_planned_steps_through_existing_computer_use(
         capture_service: object | None = None,
         progress: object | None = None,
         should_stop: object | None = None,
+        **kwargs: object,
     ) -> str:
         executed.append(instruction)
         return "computer use actions sent: 1"
@@ -464,6 +468,74 @@ def test_webui_plan_mode_executes_planned_steps_through_existing_computer_use(
         "Open Notepad and write a short summary.",
     ]
     assert "planned steps executed: 2" in response.json["message"]
+
+
+def test_execute_plan_steps_passes_step_completion_context_to_runtime(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from pico_hid_bridge.planning import Plan, PlanningStep
+
+    requests: list[dict[str, object]] = []
+
+    def fake_execute_computer_use_request(
+        config: dict,
+        instruction: str,
+        *,
+        event_sink: object,
+        capture_service: object | None = None,
+        progress: object | None = None,
+        should_stop: object | None = None,
+        success_criteria: tuple[str, ...] | None = None,
+        goal: str = "",
+        target_apps: tuple[str, ...] | None = None,
+        **kwargs: object,
+    ) -> str:
+        requests.append(
+            {
+                "instruction": instruction,
+                "success_criteria": success_criteria,
+                "goal": goal,
+                "target_apps": target_apps,
+            }
+        )
+        return "computer use actions sent: 1"
+
+    monkeypatch.setattr(app_module, "execute_computer_use_request", fake_execute_computer_use_request)
+
+    config = load_config(None)
+    config["app"]["runtime_dir"] = str(tmp_path / "runtime")
+    config["logs"]["database"] = str(tmp_path / "runtime" / "app.db")
+    config["logs"]["screenshot_dir"] = str(tmp_path / "runtime" / "screenshots")
+
+    plan = Plan(
+        user_instruction="research and summarize",
+        goal="Gather information and leave a visible summary.",
+        target_apps=("browser", "text editor"),
+        success_criteria=("The final summary is visible.",),
+        steps=(
+            PlanningStep("Search", "Open browser and search for the topic.", "Search results are visible", "browser"),
+            PlanningStep("Summarize", "Open Notepad and write a short summary.", "Summary is written", "text editor"),
+        ),
+    )
+
+    result = app_module.execute_plan_steps(config, plan, event_sink=object())
+
+    assert result == "planned steps executed: 2"
+    assert requests == [
+        {
+            "instruction": "Open browser and search for the topic.",
+            "success_criteria": ("Search results are visible",),
+            "goal": "Gather information and leave a visible summary.",
+            "target_apps": ("browser",),
+        },
+        {
+            "instruction": "Open Notepad and write a short summary.",
+            "success_criteria": ("Summary is written",),
+            "goal": "Gather information and leave a visible summary.",
+            "target_apps": ("text editor",),
+        },
+    ]
 
 
 def test_webui_plan_mode_pauses_high_risk_plan_until_approval(
@@ -541,6 +613,7 @@ def test_webui_approval_accepts_pending_plan_and_runs_existing_flow(
         capture_service: object | None = None,
         progress: object | None = None,
         should_stop: object | None = None,
+        **kwargs: object,
     ) -> str:
         executed.append(instruction)
         return "computer use actions sent: 1"
@@ -644,10 +717,17 @@ def test_computer_use_retries_once_when_model_returns_text_instead_of_action(
 ) -> None:
     retry_calls: list[dict[str, object]] = []
     executed: list[object] = []
+    service = FakeCaptureService()
 
     class FakeResponses:
+        def __init__(self) -> None:
+            self.calls = 0
+
         def create(self, **kwargs: object) -> dict[str, object]:
+            self.calls += 1
             retry_calls.append(kwargs)
+            if self.calls > 1:
+                return {"id": "verify-response", "output_text": "True"}
             return {
                 "id": "retry-response",
                 "output": [
@@ -693,7 +773,12 @@ def test_computer_use_retries_once_when_model_returns_text_instead_of_action(
     config["logs"]["database"] = str(tmp_path / "runtime" / "app.db")
     config["logs"]["screenshot_dir"] = str(tmp_path / "runtime" / "screenshots")
 
-    result = app_module.execute_computer_use_request(config, "write summary", event_sink=FakeEventSink())
+    result = app_module.execute_computer_use_request(
+        config,
+        "write summary",
+        event_sink=FakeEventSink(),
+        capture_service=service,
+    )
 
     assert result == "computer use actions sent: 1"
     assert executed == [{"type": "type", "text": "Short summary"}]
@@ -707,10 +792,17 @@ def test_computer_use_retries_once_when_model_returns_empty_response(
 ) -> None:
     retry_calls: list[dict[str, object]] = []
     executed: list[object] = []
+    service = FakeCaptureService()
 
     class FakeResponses:
+        def __init__(self) -> None:
+            self.calls = 0
+
         def create(self, **kwargs: object) -> dict[str, object]:
+            self.calls += 1
             retry_calls.append(kwargs)
+            if self.calls > 1:
+                return {"id": "verify-response", "output_text": "True"}
             return {
                 "id": "retry-response",
                 "output": [
@@ -756,12 +848,224 @@ def test_computer_use_retries_once_when_model_returns_empty_response(
     config["logs"]["database"] = str(tmp_path / "runtime" / "app.db")
     config["logs"]["screenshot_dir"] = str(tmp_path / "runtime" / "screenshots")
 
-    result = app_module.execute_computer_use_request(config, "recover empty response", event_sink=FakeEventSink())
+    result = app_module.execute_computer_use_request(
+        config,
+        "recover empty response",
+        event_sink=FakeEventSink(),
+        capture_service=service,
+    )
 
     assert result == "computer use actions sent: 1"
     assert executed == [{"type": "keypress", "keys": ["ESC"]}]
     assert retry_calls
     assert "(empty response)" in str(retry_calls[0]["input"])
+
+
+def test_computer_use_retries_action_round_when_completion_is_not_yet_visible(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    action_requests: list[str] = []
+    verification_requests: list[object] = []
+    executed: list[object] = []
+    service = FakeCaptureService()
+
+    class FakeResponses:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def create(self, **kwargs: object) -> dict[str, object]:
+            self.calls += 1
+            verification_requests.append(kwargs.get("input"))
+            if self.calls == 1:
+                return {
+                    "id": "verify-1",
+                    "output": [
+                        {
+                            "type": "computer_call",
+                            "call_id": "verify-call-1",
+                            "actions": [{"type": "screenshot"}],
+                        }
+                    ],
+                }
+            if self.calls == 2:
+                return {"id": "verify-1-result", "output_text": "False"}
+            if self.calls == 3:
+                return {
+                    "id": "verify-2",
+                    "output": [
+                        {
+                            "type": "computer_call",
+                            "call_id": "verify-call-2",
+                            "actions": [{"type": "screenshot"}],
+                        }
+                    ],
+                }
+            if self.calls == 4:
+                return {"id": "verify-2-result", "output_text": "True"}
+            raise AssertionError(f"unexpected verification call: {kwargs!r}")
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    class FakeExecutor:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            return
+
+        def execute_supported_action(self, action: object) -> bool:
+            executed.append(action)
+            return True
+
+    class FakeEventSink:
+        def emit(self, event: object) -> None:
+            return
+
+    responses = iter(
+        [
+            {
+                "id": "round-1",
+                "output": [
+                    {
+                        "type": "computer_call",
+                        "call_id": "call-1",
+                        "actions": [{"type": "keypress", "keys": ["ESC"]}],
+                    }
+                ],
+            },
+            {
+                "id": "round-2",
+                "output": [
+                    {
+                        "type": "computer_call",
+                        "call_id": "call-2",
+                        "actions": [{"type": "keypress", "keys": ["ENTER"]}],
+                    }
+                ],
+            },
+        ]
+    )
+
+    def fake_create_initial_response(*args: object, **kwargs: object) -> dict[str, object]:
+        action_requests.append(str(kwargs["task"]))
+        return next(responses)
+
+    monkeypatch.setattr("openai.OpenAI", lambda **kwargs: FakeClient())
+    monkeypatch.setattr(app_module, "read_openai_api_key", lambda config: "test-key")
+    monkeypatch.setattr(app_module, "create_initial_response", fake_create_initial_response)
+
+    def fake_send_screenshot_response(*args: object, **kwargs: object) -> dict[str, object]:
+        if str(kwargs["call_id"]).startswith("verify-call"):
+            return args[0].responses.create(input=[{"type": "computer_call_output"}])
+        return {"id": "after-action", "output_text": "done"}
+
+    monkeypatch.setattr(
+        app_module,
+        "send_screenshot_response",
+        fake_send_screenshot_response,
+    )
+    monkeypatch.setattr(app_module, "ActionExecutor", FakeExecutor)
+
+    config = load_config(None)
+    config["app"]["runtime_dir"] = str(tmp_path / "runtime")
+    config["logs"]["database"] = str(tmp_path / "runtime" / "app.db")
+    config["logs"]["screenshot_dir"] = str(tmp_path / "runtime" / "screenshots")
+    config["openai"]["max_completion_rounds"] = 2
+    config["openai"]["max_verify_turns"] = 3
+
+    result = app_module.execute_computer_use_request(
+        config,
+        "open browser",
+        event_sink=FakeEventSink(),
+        capture_service=service,
+    )
+
+    assert result == "computer use actions sent: 2"
+    assert executed == [
+        {"type": "keypress", "keys": ["ESC"]},
+        {"type": "keypress", "keys": ["ENTER"]},
+    ]
+    assert len(action_requests) == 2
+    assert "Continue from the current PC state." in action_requests[1]
+    assert "not yet satisfy the visible completion check" in action_requests[1]
+    assert len(verification_requests) == 4
+    assert service.png_calls == 4
+
+
+def test_computer_use_accepts_already_complete_screen_without_extra_action(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model_calls: list[object] = []
+    service = FakeCaptureService()
+
+    class FakeResponses:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def create(self, **kwargs: object) -> dict[str, object]:
+            self.calls += 1
+            model_calls.append(kwargs.get("input"))
+            if self.calls == 1:
+                return {"id": "text-retry-1", "output_text": "already visible"}
+            if self.calls == 2:
+                return {"id": "text-retry-2", "output_text": "already visible"}
+            if self.calls == 3:
+                return {
+                    "id": "verify-1",
+                    "output": [
+                        {
+                            "type": "computer_call",
+                            "call_id": "verify-call-1",
+                            "actions": [{"type": "screenshot"}],
+                        }
+                    ],
+                }
+            if self.calls == 4:
+                return {"id": "verify-1-result", "output_text": "True"}
+            raise AssertionError(f"unexpected verification call: {kwargs!r}")
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    class FakeEventSink:
+        def emit(self, event: object) -> None:
+            return
+
+    monkeypatch.setattr("openai.OpenAI", lambda **kwargs: FakeClient())
+    monkeypatch.setattr(app_module, "read_openai_api_key", lambda config: "test-key")
+    monkeypatch.setattr(
+        app_module,
+        "create_initial_response",
+        lambda *args, **kwargs: {"id": "done-response", "output_text": "already visible"},
+    )
+
+    def fake_send_screenshot_response(*args: object, **kwargs: object) -> dict[str, object]:
+        if str(kwargs["call_id"]).startswith("verify-call"):
+            return args[0].responses.create(input=[{"type": "computer_call_output"}])
+        raise AssertionError("action screenshot loop should not run")
+
+    monkeypatch.setattr(
+        app_module,
+        "send_screenshot_response",
+        fake_send_screenshot_response,
+    )
+
+    config = load_config(None)
+    config["app"]["runtime_dir"] = str(tmp_path / "runtime")
+    config["logs"]["database"] = str(tmp_path / "runtime" / "app.db")
+    config["logs"]["screenshot_dir"] = str(tmp_path / "runtime" / "screenshots")
+    config["openai"]["max_verify_turns"] = 2
+
+    result = app_module.execute_computer_use_request(
+        config,
+        "open browser",
+        event_sink=FakeEventSink(),
+        capture_service=service,
+    )
+
+    assert result == "computer use actions sent: 0"
+    assert len(model_calls) == 4
+    assert service.png_calls == 1
 
 
 def test_webui_rejects_second_command_while_request_is_running(
@@ -779,6 +1083,7 @@ def test_webui_rejects_second_command_while_request_is_running(
         event_sink: object,
         progress: object | None = None,
         should_stop: object | None = None,
+        **kwargs: object,
     ) -> str:
         if progress is not None:
             progress("computer_use", "Computer Use API calling")
@@ -864,6 +1169,7 @@ def test_webui_command_ack_timeout_is_logged_as_pico_uart(
         event_sink: object,
         progress: object | None = None,
         should_stop: object | None = None,
+        **kwargs: object,
     ) -> str:
         raise TimeoutError("Pico did not acknowledge command completion")
 

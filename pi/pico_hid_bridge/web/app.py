@@ -17,12 +17,13 @@ from typing import Any
 from flask import Flask, Response, jsonify, request, send_file
 
 from pico_hid_bridge.actions import ActionExecutor, CompositeEventSink, HidTransport, PipelineEvent
-from pico_hid_bridge.capture import capture_jpeg_from_config, capture_service_from_config
+from pico_hid_bridge.capture import capture_jpeg_from_config, capture_png_base64, capture_service_from_config
 from pico_hid_bridge.computer_use import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_MODEL,
     attr,
     action_type,
+    build_retry_input,
     computer_actions,
     computer_call_id,
     create_initial_response,
@@ -41,7 +42,9 @@ from pico_hid_bridge.hid import (
 from pico_hid_bridge.notifications import EmailNotificationSink
 from pico_hid_bridge.operation_log import OperationLogEventSink, OperationLogStore, token_prediction_log_message
 from pico_hid_bridge.paths import resolve_path
+from pico_hid_bridge.intent import AgentIntent, analyze_user_intent
 from pico_hid_bridge.planning import Plan, PlanningService
+from pico_hid_bridge.prompt_assets import get_prompt_text
 from pico_hid_bridge.web.templates import HTML
 
 
@@ -58,6 +61,13 @@ class ApprovalRequiredError(RuntimeError):
         super().__init__("planned request requires approval before execution")
         self.plan = plan
         self.detail = detail
+
+
+@dataclass(frozen=True)
+class ComputerUseRoundResult:
+    executed_count: int
+    terminal_text: str = ""
+    hit_turn_limit: bool = False
 
 
 def now_iso() -> str:
@@ -608,17 +618,165 @@ def read_openai_api_key(config: dict[str, Any]) -> str:
     raise RuntimeError(f"missing API key file: {api_key_file}")
 
 
-def execute_computer_use_request(
-    config: dict[str, Any],
+def normalize_text_items(values: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+    items: list[str] = []
+    for raw in values or ():
+        text = str(raw or "").strip()
+        if text:
+            items.append(text)
+    return tuple(items)
+
+
+def resolve_execution_intent(
     instruction: str,
     *,
+    goal: str = "",
+    success_criteria: tuple[str, ...] | list[str] | None = None,
+    target_apps: tuple[str, ...] | list[str] | None = None,
+) -> AgentIntent:
+    intent = analyze_user_intent(instruction)
+    resolved_success_criteria = normalize_text_items(success_criteria) or intent.success_criteria
+    resolved_target_apps = normalize_text_items(target_apps) or intent.target_apps
+    resolved_goal = str(goal or intent.normalized_goal).strip() or intent.normalized_goal
+    return AgentIntent(
+        user_instruction=intent.user_instruction,
+        normalized_goal=resolved_goal,
+        target_apps=resolved_target_apps,
+        subgoals=intent.subgoals,
+        success_criteria=resolved_success_criteria,
+        execution_notes=intent.execution_notes,
+        safety_flags=intent.safety_flags,
+        requires_planning=intent.requires_planning,
+        risk_level=intent.risk_level,
+        requires_approval=intent.requires_approval,
+    )
+
+
+def capture_latest_png_base64(args: argparse.Namespace, capture_service: Any | None = None) -> str:
+    if capture_service is not None:
+        return str(capture_service.latest_png_base64())
+    return capture_png_base64(args)
+
+
+def parse_true_false_output(text: str) -> bool:
+    normalized = text.strip().strip(".").strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    if "true" in normalized and "false" not in normalized:
+        return True
+    if "false" in normalized and "true" not in normalized:
+        return False
+    raise RuntimeError(f"completion verification did not return True or False: {text!r}")
+
+
+def build_completion_retry_instruction(instruction: str, *, intent: AgentIntent) -> str:
+    lines = [
+        instruction.strip(),
+        "Continue from the current PC state.",
+        "The previous attempt did not yet satisfy the visible completion check.",
+    ]
+    if intent.normalized_goal:
+        lines.append(f"Goal: {intent.normalized_goal}")
+    if intent.success_criteria:
+        lines.append("Make these results visible before stopping: " + "; ".join(intent.success_criteria))
+    lines.append("Do not repeat already-complete work unless it is necessary to recover.")
+    return "\n".join(line for line in lines if line)
+
+
+def build_completion_verification_instruction(instruction: str, *, intent: AgentIntent) -> str:
+    lines = [
+        "Do not control the computer.",
+        "Inspect the current screen and return exactly 'True' or 'False'.",
+        "Return 'True' only when every visible success criterion is already satisfied on the current screenshot.",
+        "Return 'False' if any criterion is missing, unclear, blocked, or still loading.",
+        "If you need to inspect the screen, request screenshot actions only.",
+        "Never return keypress, type, click, double_click, move, drag, scroll, or wait actions.",
+        f"Original request: {intent.user_instruction or instruction}",
+    ]
+    if intent.normalized_goal:
+        lines.append(f"Goal: {intent.normalized_goal}")
+    if intent.target_apps:
+        lines.append("Relevant apps: " + ", ".join(intent.target_apps))
+    if intent.success_criteria:
+        lines.append("Visible success criteria: " + "; ".join(intent.success_criteria))
+    return "\n".join(lines)
+
+
+def verify_completion_state(
+    client: Any,
+    *,
+    model: str,
+    args: argparse.Namespace,
     event_sink: Any,
+    capture_service: Any | None,
+    instruction: str,
+    intent: AgentIntent,
+    max_verify_turns: int,
+    missing_token_estimate: int,
+) -> bool:
+    response = client.responses.create(
+        model=model,
+        tools=[{"type": "computer"}],
+        input=build_completion_verification_instruction(instruction, intent=intent),
+    )
+    emit_token_usage(
+        event_sink,
+        response,
+        phase="verification_prompt",
+        model=model,
+        missing_estimate=missing_token_estimate,
+    )
+
+    for _ in range(max_verify_turns):
+        computer_call = find_computer_call(response)
+        if computer_call is None:
+            return parse_true_false_output(extract_output_text(response))
+
+        actions = computer_actions(computer_call)
+        if actions and not all(action_type(action) == "screenshot" for action in actions):
+            raise RuntimeError(
+                "completion verification requested a non-screenshot action: "
+                + "; ".join(describe_action(action) for action in actions)
+            )
+
+        response = send_screenshot_response(
+            client,
+            model=model,
+            args=args,
+            response=response,
+            call_id=computer_call_id(computer_call),
+            screenshot_base64=capture_latest_png_base64(args, capture_service),
+        )
+        emit_token_usage(
+            event_sink,
+            response,
+            phase="verification_screenshot",
+            model=model,
+            missing_estimate=missing_token_estimate,
+        )
+
+    raise RuntimeError("completion verification did not finish")
+
+
+def execute_computer_use_round(
+    *,
+    client: Any,
+    model: str,
+    args: argparse.Namespace,
+    prompt: str,
+    task: str,
+    intent: AgentIntent,
+    event_sink: Any,
+    executor: ActionExecutor,
     capture_service: Any | None = None,
     progress: Any | None = None,
     should_stop: Any | None = None,
-) -> str:
-    from openai import OpenAI
-
+    max_action_turns: int,
+    missing_token_estimate: int,
+    initial_phase: str,
+) -> ComputerUseRoundResult:
     def update(phase: str, status: str, detail: str = "") -> None:
         if progress is not None:
             progress(phase, status, detail)
@@ -627,41 +785,41 @@ def execute_computer_use_request(
         if should_stop is not None and should_stop():
             raise RuntimeError("emergency stop requested")
 
-    openai_cfg = config.get("openai", {})
-    model = str(openai_cfg.get("model", DEFAULT_MODEL))
-    api_timeout = float(openai_cfg.get("api_timeout", 60.0))
-    max_action_turns = int(openai_cfg.get("max_action_turns", 5))
-    computer_prompt = str(openai_cfg.get("computer_prompt", "")).strip() or None
-    missing_token_estimate = token_budget_config(config)["baseline_tokens_per_operation"]
-    args = make_computer_args(config)
-    update("computer_use", "Computer Use API calling", instruction)
-    client = OpenAI(api_key=read_openai_api_key(config), timeout=api_timeout)
-    response = create_initial_response(client, model=model, task=instruction, args=args, prompt=computer_prompt)
-    emit_token_usage(event_sink, response, phase="initial", model=model, missing_estimate=missing_token_estimate)
-    executor = ActionExecutor(
-        HidTransport(port=args.port, baudrate=args.baudrate, timeout=args.timeout),
+    response = create_initial_response(
+        client,
+        model=model,
+        task=task,
+        args=args,
+        prompt=prompt,
+        intent=intent,
+    )
+    emit_token_usage(
         event_sink,
+        response,
+        phase=initial_phase,
+        model=model,
+        missing_estimate=missing_token_estimate,
     )
 
     executed: list[str] = []
     no_action_retry_count = 0
     for _ in range(max_action_turns):
         ensure_not_stopped()
-        update("result_wait", "Waiting for Computer Use result", instruction)
+        update("result_wait", "Waiting for Computer Use result", task)
         computer_call = find_computer_call(response)
         if computer_call is None:
             text = extract_output_text(response)
             if executed:
-                return f"computer use actions sent: {len(executed)}"
+                return ComputerUseRoundResult(executed_count=len(executed), terminal_text=text)
             if no_action_retry_count < 2:
                 no_action_retry_count += 1
-                update("computer_use", "Retrying Computer Use action request", instruction)
+                update("computer_use", "Retrying Computer Use action request", task)
                 previous_answer = text[:1000] if text else "(empty response)"
-                retry_input = (
-                    "Never answer the task in natural language. Use computer tool actions now. "
-                    "If the task asks you to write or summarize text, open a text editor and type a short ASCII "
-                    "version on the physical PC. Avoid unsupported drag and scroll actions. Previous answer: "
-                    f"{previous_answer}"
+                retry_input = build_retry_input(
+                    task,
+                    previous_answer,
+                    prompt=prompt,
+                    intent=intent,
                 )
                 retry_kwargs: dict[str, Any] = {
                     "model": model,
@@ -672,22 +830,34 @@ def execute_computer_use_request(
                 if previous_response_id:
                     retry_kwargs["previous_response_id"] = previous_response_id
                 response = client.responses.create(**retry_kwargs)
-                emit_token_usage(event_sink, response, phase="text_retry", model=model, missing_estimate=missing_token_estimate)
+                emit_token_usage(
+                    event_sink,
+                    response,
+                    phase="text_retry",
+                    model=model,
+                    missing_estimate=missing_token_estimate,
+                )
                 continue
-            raise RuntimeError(f"Computer Use returned no computer action: {text!r}")
+            return ComputerUseRoundResult(executed_count=0, terminal_text=text)
 
         actions = computer_actions(computer_call)
         if not actions or all(action_type(action) == "screenshot" for action in actions):
-            update("screenshot", "Sending screenshot to Computer Use", instruction)
+            update("screenshot", "Sending screenshot to Computer Use", task)
             response = send_screenshot_response(
                 client,
                 model=model,
                 args=args,
                 response=response,
                 call_id=computer_call_id(computer_call),
-                screenshot_base64=capture_service.latest_png_base64() if capture_service is not None else None,
+                screenshot_base64=capture_latest_png_base64(args, capture_service),
             )
-            emit_token_usage(event_sink, response, phase="screenshot", model=model, missing_estimate=missing_token_estimate)
+            emit_token_usage(
+                event_sink,
+                response,
+                phase="screenshot",
+                model=model,
+                missing_estimate=missing_token_estimate,
+            )
             continue
 
         unsupported: list[str] = []
@@ -703,22 +873,121 @@ def execute_computer_use_request(
 
         if unsupported:
             raise RuntimeError("unsupported action for current Pico firmware: " + "; ".join(unsupported))
+
         if executed:
-            update("screenshot", "Sending screenshot to Computer Use", instruction)
+            update("screenshot", "Sending screenshot to Computer Use", task)
             response = send_screenshot_response(
                 client,
                 model=model,
                 args=args,
                 response=response,
                 call_id=computer_call_id(computer_call),
-                screenshot_base64=capture_service.latest_png_base64() if capture_service is not None else None,
+                screenshot_base64=capture_latest_png_base64(args, capture_service),
             )
-            emit_token_usage(event_sink, response, phase="after_action", model=model, missing_estimate=missing_token_estimate)
-            continue
+            emit_token_usage(
+                event_sink,
+                response,
+                phase="after_action",
+                model=model,
+                missing_estimate=missing_token_estimate,
+            )
 
-    if executed:
-        return f"computer use actions sent: {len(executed)}"
-    raise RuntimeError("Computer Use did not return an executable action")
+    return ComputerUseRoundResult(executed_count=len(executed), hit_turn_limit=not bool(executed))
+
+
+def execute_computer_use_request(
+    config: dict[str, Any],
+    instruction: str,
+    *,
+    event_sink: Any,
+    capture_service: Any | None = None,
+    progress: Any | None = None,
+    should_stop: Any | None = None,
+    success_criteria: tuple[str, ...] | list[str] | None = None,
+    goal: str = "",
+    target_apps: tuple[str, ...] | list[str] | None = None,
+) -> str:
+    from openai import OpenAI
+
+    def update(phase: str, status: str, detail: str = "") -> None:
+        if progress is not None:
+            progress(phase, status, detail)
+
+    def ensure_not_stopped() -> None:
+        if should_stop is not None and should_stop():
+            raise RuntimeError("emergency stop requested")
+
+    openai_cfg = config.get("openai", {})
+    model = str(openai_cfg.get("model", DEFAULT_MODEL))
+    api_timeout = float(openai_cfg.get("api_timeout", 60.0))
+    max_action_turns = int(openai_cfg.get("max_action_turns", 5))
+    max_completion_rounds = max(1, int(openai_cfg.get("max_completion_rounds", 3)))
+    max_verify_turns = max(1, int(openai_cfg.get("max_verify_turns", 5)))
+    computer_prompt = get_prompt_text(config, "computer_prompt")
+    missing_token_estimate = token_budget_config(config)["baseline_tokens_per_operation"]
+    args = make_computer_args(config)
+    intent = resolve_execution_intent(
+        instruction,
+        goal=goal,
+        success_criteria=success_criteria,
+        target_apps=target_apps,
+    )
+    client = OpenAI(api_key=read_openai_api_key(config), timeout=api_timeout)
+    executor = ActionExecutor(
+        HidTransport(port=args.port, baudrate=args.baudrate, timeout=args.timeout),
+        event_sink,
+    )
+    total_executed = 0
+
+    for round_index in range(1, max_completion_rounds + 1):
+        ensure_not_stopped()
+        task = instruction if round_index == 1 else build_completion_retry_instruction(instruction, intent=intent)
+        update("computer_use", "Computer Use API calling", task)
+        round_result = execute_computer_use_round(
+            client=client,
+            model=model,
+            args=args,
+            prompt=computer_prompt,
+            task=task,
+            intent=intent,
+            event_sink=event_sink,
+            executor=executor,
+            capture_service=capture_service,
+            progress=progress,
+            should_stop=should_stop,
+            max_action_turns=max_action_turns,
+            missing_token_estimate=missing_token_estimate,
+            initial_phase="initial" if round_index == 1 else "completion_retry",
+        )
+        total_executed += round_result.executed_count
+
+        update("verification", "Verifying completion", intent.normalized_goal or instruction)
+        if verify_completion_state(
+            client,
+            model=model,
+            args=args,
+            event_sink=event_sink,
+            capture_service=capture_service,
+            instruction=instruction,
+            intent=intent,
+            max_verify_turns=max_verify_turns,
+            missing_token_estimate=missing_token_estimate,
+        ):
+            return f"computer use actions sent: {total_executed}"
+
+        if round_result.executed_count == 0:
+            if round_result.hit_turn_limit:
+                raise RuntimeError("Computer Use did not return an executable action")
+            raise RuntimeError(f"Computer Use returned no computer action: {round_result.terminal_text!r}")
+
+        if round_index >= max_completion_rounds:
+            break
+
+        update("verification", "Completion not yet visible; retrying", intent.normalized_goal or instruction)
+
+    raise RuntimeError(
+        f"completion verification failed after {max_completion_rounds} action round(s)"
+    )
 
 
 def execute_planned_request(
@@ -772,10 +1041,15 @@ def execute_plan_steps(
         if should_stop is not None and should_stop():
             raise RuntimeError("emergency stop requested")
         update("plan_step", f"Executing planned step {index}/{total}", step.title)
+        step_success_criteria = normalize_text_items((step.expected_result,)) or plan.success_criteria
+        step_target_apps = normalize_text_items((step.application,)) or plan.target_apps
         kwargs: dict[str, Any] = {
             "event_sink": event_sink,
             "progress": progress,
             "should_stop": should_stop,
+            "success_criteria": step_success_criteria,
+            "goal": plan.goal or plan.summary or step.title,
+            "target_apps": step_target_apps,
         }
         if capture_service is not None:
             kwargs["capture_service"] = capture_service

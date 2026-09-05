@@ -62,7 +62,10 @@ def test_default_openai_prompt_prefers_keyboard_shortcuts() -> None:
 
 def test_default_openai_planning_settings_are_present() -> None:
     openai = DEFAULT_CONFIG["openai"]
+    assert openai["prompts_file"] == "pi/prompts.yaml"
     assert openai["planning_model"]
+    assert openai["max_completion_rounds"] > 0
+    assert openai["max_verify_turns"] > 0
     assert "Return JSON only" in openai["planning_prompt"]
     assert "Do not specialize for test scenarios" in openai["planning_prompt"]
 
