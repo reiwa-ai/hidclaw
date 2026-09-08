@@ -87,6 +87,7 @@ http://127.0.0.1:8080/
 ## ドキュメント
 
 - [HOW_TO_USE.md](HOW_TO_USE.md): 使い方と設定
+- [docs/images/HIDClaw.pdf](docs/images/HIDClaw.pdf): 印刷用パンフレット
 - [docs/DISCORD_COMMANDS.md](docs/DISCORD_COMMANDS.md): Discord コマンドのリファレンス
 - [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md): 開発仕様
 - [docs/TESTING.md](docs/TESTING.md): テスト手順
